@@ -1,0 +1,120 @@
+# SighExtraImage
+
+SighExtraImage asks a narrow computational-imaging question:
+
+> Can weak light observed near an image boundary reduce uncertainty about what lies outside the frame?
+
+It separates **physical evidence** from **generative plausibility**. Gates 0–1 intentionally use no pretrained diffusion model.
+
+## Gates 0–1 v0 preregistered run
+
+Frozen before the first multi-seed scientific receipt:
+
+- seeds: `3, 7, 11, 19, 23, 29, 31, 37`
+- candidate hypotheses per scene: `2500`
+- oracle likelihood noise scale: `sigma = 0.01`
+- synthetic extracted-signal likelihood: `affine` (shared gain + per-channel offsets)
+- scene: `72 x 96` visible crop with `64` hidden pixels
+- transport: `64` boundary samples, `64` hidden angular bins, soft corner occluder
+- controls: mirrored wrong physics + no-occluder rank-poor transport + uniform prior
+- TV inversion: `lambda_tv=0.015`, `300` optimization steps, L2 oracle residual
+- Gate 1 initialization: theta offset by `0.28` (other continuous attributes held at truth)
+- Gate 1 normalized step size: `0.12`
+- Gate 1 controls: mirrored wrong physics, no-occluder physics, norm-matched random direction
+- pixel extractor: linearized RGB, geometric row aggregation, smooth profile, low-quantile DC removal
+
+Run:
+
+```bash
+sighextraimage benchmark \
+  --seeds 3 7 11 19 23 29 31 37 \
+  --candidates 2500 \
+  --sigma 0.01 \
+  --residual-mode affine \
+  --tv-iters 300 \
+  --output results/receipts/gates-0-1-v0.json
+```
+
+## Claim boundary
+
+A positive synthetic result means only that the declared transport contains recoverable information and that the declared likelihood can exploit it. It does **not** mean an arbitrary photograph uniquely reveals the real scene outside its borders.
+
+The real-photo GUI is an **evidence inspector**, not a hidden-world revelation tool. Diffusion-guided outpainting is a later gate.
+
+## Gates 0–1 v0 result
+
+Receipt: `results/receipts/gates-0-1-v0.json`
+
+### Gate 0 — oracle boundary measurement: **passes narrowly**
+
+Across the eight preregistered seeds:
+
+- median prior theta error: **0.3628 rad**
+- median correct-physics theta error: **0.06655 rad**
+- median mirrored-wrong theta error: **0.5899 rad**
+- median no-occluder theta error: **0.3886 rad**
+- median correct theta posterior/prior std ratio: **0.7343×**
+- median no-occluder std ratio: **1.0658×** (no useful contraction)
+- median prior RGB error: **0.3519**
+- median correct-physics RGB error: **0.2462**
+
+The correct oracle likelihood therefore reduces median theta error and RGB error relative to the uniform prior, contracts theta uncertainty, and localizes theta much better than the mirrored and no-occluder controls. The effect is not universal: seeds 3, 7 and 23 do not improve theta error over the prior, so the claim is aggregate and attribute-specific rather than scene-universal.
+
+### Physics-only TV baseline
+
+Median angular-centroid error from the TV inversion is **0.08834 rad**. This confirms that the declared corner measurement itself contains coarse angular information before any learned semantic prior is introduced.
+
+### Gate 1 — local likelihood gradient: **passes for the preregistered theta-offset probe**
+
+Mean normalized truth-error reduction after one equal-size step:
+
+- correct physics: **+0.1012** (**8/8** seeds improve)
+- mirrored wrong physics: **−0.04490** (**2/8** improve)
+- no occluder: **−0.02325** (**0/8** improve)
+- norm-matched random direction: **−0.01647** (**2/8** improve)
+
+This supports the narrow claim that, for this synthetic parameterization and theta perturbation, the correct boundary likelihood supplies a locally useful guidance direction.
+
+### Pixel extraction — **measurement shape survives, posterior calibration fails**
+
+The synthetic visible-pixel extractor has median correlation **0.9946** with the oracle boundary profile. That is encouraging for the extraction stage itself.
+
+However, feeding the extracted profile into the preregistered affine posterior with the same `sigma=0.01` collapses the importance weights:
+
+- median correct-physics ESS: **1.0 / 2500**
+- median mirrored-wrong ESS: **1.0 / 2500**
+- no-occluder ESS: approximately **2500 / 2500**
+
+Therefore the apparently tiny extracted-signal theta errors are **not accepted as a Gate 0 success**. The likelihood scale is not calibrated across the affine normalized residual, and both correct and wrong structured operators become spuriously overconfident. The first receipt is preserved unchanged.
+
+The next scientific fix is not to tune until the answer looks good. It is to define/calibrate an affine-residual temperature independently (for example by synthetic held-out noise/nuisance calibration or target ESS coverage), then rerun that as a new receipt with a new gate name.
+
+## Current conclusion
+
+The v0 bench establishes three things inside its declared synthetic world:
+
+1. structured corner/penumbra light contains recoverable angular information;
+2. the no-occluder ablation removes that localization signal;
+3. the correct oracle likelihood supplies a truth-directed theta gradient.
+
+It does **not** yet establish calibrated posterior inference from extracted photo pixels. Real-photo mode should therefore expose boundary evidence and diagnostics, not claim to reveal the hidden scene.
+
+## Local GUI
+
+Install the project in a normal online Python environment with the GUI extra:
+
+```bash
+pip install -e '.[gui]'
+sighextraimage gui
+```
+
+The app opens locally in your browser and contains two modes:
+
+- **Synthetic Lab** — shows the controlled hidden truth, visible crop, posterior contraction, TV inversion, and Gate 1 controls. Ground-truth panels are explicitly synthetic-only.
+- **Photo Inspector** — upload a JPG/PNG, select the relevant edge and boundary region, then inspect the extracted illumination profile, derivative/chromatic diagnostics, transport conditioning, and optional physics-only inverse.
+
+Photo Inspector deliberately does **not** output a single “revealed” hidden panorama. The first v0 receipt found that the extracted affine likelihood was overconfident even though the extracted profile shape tracked the oracle signal well. Until that likelihood is independently calibrated, the GUI reports evidence quality and model diagnostics only.
+
+For weak or flat boundaries it reports:
+
+> No evidence that this selected boundary strongly constrains the unseen region under the current model.
