@@ -54,7 +54,7 @@ Files: modify `gui.py`, `cli.py`, `pyproject.toml`, `README.md`; create `tests/t
 - [x] Write/run failing GUI/CLI behavior tests for invoking generation and returning/saving an enlarged image.
 - [x] Wire shared controls and comparison outputs; add optional dependencies and first-use download/cache instructions.
 - [x] Run the complete suite, compile check, and GUI launch/client smoke. Optional full-checkpoint smoke was not run.
-- [ ] Review the full diff, sync through GitHub, and verify the remote tree includes the generator.
+- [x] Review the full diff, sync through GitHub, and verify the remote tree includes the generator.
 
 Verification: 80 tests pass, including real four-/nine-channel Diffusers components and a saved safetensors checkpoint through the CLI. A live Gradio client generated a 100 x 40 extension from an 80 x 40 photograph, preserved all original pixels exactly, and reported the weak-evidence fallback. Compile and whitespace checks pass. Full pretrained image quality and CUDA/MPS execution remain untested in this CPU environment.
 
