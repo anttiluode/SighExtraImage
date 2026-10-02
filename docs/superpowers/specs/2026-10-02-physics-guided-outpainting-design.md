@@ -1,395 +1,507 @@
-# SighExtraImage v0 — Physics-Guided Outpainting Design
+# SighExtraImage — Physics-Guided Outpainting Design
 
 **Date:** 2026-10-02  
-**Status:** revised after design review; ready for written-spec approval
+**Status:** revised after GUI/control design review; ready for written-spec approval
 
 ## Goal
 
-Test a narrow claim before building a full diffusion product:
+Build a scientifically honest path from weak optical evidence at an image boundary to constrained hypotheses about what lies outside the frame, while keeping the project usable as a local photo-inspection tool.
 
-> Weak optical evidence inside a visible crop can reduce uncertainty about a scene that lies outside the image boundary, and that evidence can constrain a shared world prior.
+The core claim to test is narrow:
 
-The first version is a synthetic inverse-problem benchmark. It is not a claim that arbitrary photographs reveal a unique off-frame scene.
+> Weak in-frame optical leakage can reduce uncertainty about an out-of-frame physical latent, and a correct likelihood can constrain a shared prior more than a wrong or uninformative likelihood.
 
-## Core architectural change
+The project must never equate a plausible generated continuation with a measured reconstruction.
 
-The hidden region is represented first as a **low-dimensional physical latent** rather than as raw generated RGB pixels.
+## Design principle
 
-Let
+One scientific core serves both the benchmark and the GUI.
+
+There is no separate “demo physics.” Synthetic experiments, CLI commands, the GUI, later diffusion guidance, and eventual Varjoluotain integration must call the same transport, extraction, likelihood, inversion, posterior, metrics, and receipt code.
+
+## Core representation
+
+Represent the unseen region first as a low-dimensional physical latent rather than raw RGB pixels:
 
 ```text
 z_physical = {
-  position,
-  size,
+  angular / image-plane position,
+  size / extent,
   shape,
   albedo / coarse RGB,
   occupancy,
-  coarse depth / layout,
+  coarse layout / depth,
   light parameters
 }
 ```
 
-and let the observed boundary signal be
+The observed boundary signal is
 
 ```text
-y = A(z_physical) + noise
+y_R = A_R(z_physical) + noise
 ```
 
-where `A` is a deliberately cheap, differentiable, auditable proxy for indirect light transport onto an informative visible boundary region `R`.
+where `R` is an explicit visible measurement region and `A_R` is a cheap differentiable proxy for indirect light transport / penumbra formation onto that region.
 
-This separates two jobs:
+This separates:
 
-- **physics:** `z_physical -> A(z_physical) -> boundary evidence`;
-- **appearance prior:** `z_physical -> plausible hidden image / scene appearance`.
+- **physics:** hidden latent -> predicted boundary evidence;
+- **appearance prior:** hidden latent / hidden pixels -> plausible scene appearance.
 
-A later diffusion model can supply appearance and semantic plausibility without pretending that every generated pixel is physically measured.
+A later diffusion model may provide natural-image plausibility, but the physics term is allowed to constrain only what the observed region can support.
 
-## Scientific questions and gates
+## Scientific gates
 
-The project is staged so each claim can fail independently.
+### Gate 0 — Does the boundary signal carry recoverable information?
 
-### Gate 0 — Is there recoverable information in the boundary signal?
+Using the same candidate set from a declared prior, compare:
 
-Given a declared prior over `z_physical`, compare:
+1. **prior-only** — uniform prior weights;
+2. **correct physics** — weights from `p(y | z, A)`;
+3. **wrong physics** — same hypotheses, mismatched transport;
+4. **no-occluder ablation** — transport with angular visibility structure removed or collapsed toward an all-visible/rank-poor operator.
 
-1. **prior-only inference** — draw hidden hypotheses from the prior without using `y`;
-2. **correct-physics posterior** — weight the same prior hypotheses by `p(y | z, A)`;
-3. **wrong-physics posterior** — use a mismatched transport operator.
-
-A positive Gate 0 means only that the synthetic boundary measurement reduces uncertainty about some hidden attributes.
+A positive result means only that the declared synthetic measurement narrows some hidden attributes.
 
 ### Gate 1 — Does the physics gradient point toward truth?
 
 Before any diffusion model, test the actual likelihood gradient.
 
-Starting from deliberately wrong hidden hypotheses, optimize
+For wrong initial hypotheses, evaluate
 
 ```text
-L(z) = || y - A(z) ||^2
+L(z) = residual(y_R, A_R(z))
 ```
 
-and measure whether `-grad_z L` moves recoverable attributes toward the true hidden state more often than matched controls.
+and test whether `-grad_z L` moves recoverable continuous latent attributes toward truth better than:
 
-Primary checks:
+- wrong-physics gradients;
+- norm-matched random directions;
+- no-occluder gradients.
 
-- horizontal/vertical position moves toward truth;
-- coarse color/albedo moves toward truth;
-- size moves toward truth where identifiable;
-- correct physics beats wrong-physics gradients;
-- gradient norm is finite and does not vanish trivially.
+This gate prevents “differentiable” from being mistaken for “useful guidance.”
 
-This gate prevents us from assuming that an approximate forward model produces useful guidance.
+### Gate 2 — Posterior contraction and ambiguity structure
 
-### Gate 2 — Posterior narrowing in the physical latent
-
-Use the correct likelihood with the same prior and quantify whether posterior uncertainty contracts for the attributes the measurement actually carries.
-
-The goal is not uniqueness. The expected output is a family of compatible hidden states.
+Quantify how much the likelihood narrows the physical latent and which attributes remain degenerate. The output should be a family of compatible hidden states, not one authoritative reconstruction.
 
 ### Gate 3 — Generative / diffusion guidance
 
 Only after Gates 0–2 survive, attach a pretrained outpainting prior.
 
-The intended pattern is:
+Conceptual loop:
 
 ```text
 x_t
   -> denoiser predicts x0_hat
-  -> map / decode hidden part to z_physical or a differentiable proxy
-  -> A(z_physical) predicts y_hat on region R
-  -> physics residual ||y - y_hat||^2
-  -> guidance gradient nudges the reverse process
+  -> hidden representation / proxy
+  -> A_R(...) predicts y_hat
+  -> residual(y_R, y_hat)
+  -> likelihood guidance nudges reverse diffusion
 ```
 
-The diffusion model remains responsible for natural-image plausibility. The physics term constrains only properties supported by the measured boundary evidence.
+The diffusion prior supplies image plausibility; boundary evidence supplies a limited physical constraint.
 
-### Gate 4 — Varjoluotain measurement extraction
+### Gate 4 — Real Varjoluotain measurement extraction
 
-Replace the perfect synthetic measurement with
+Replace perfect synthetic `y` with a descriptor extracted from real visible pixels:
 
 ```text
-y = Varjoluotain.extract_illumination(I_visible)
+y_hat = extract_boundary_signal(I_visible, R)
 ```
 
-or an equivalent exported descriptor.
+Only this stage tests whether real-pixel illumination leakage can constrain the hidden-scene posterior.
 
-Only at this stage does the project claim to test whether real-pixel leakage extracted by Varjoluotain can constrain outpainting.
+## Synthetic scene model
 
-## Scene model
+Use a simple hidden world outside the crop, with at minimum:
 
-Use a small synthetic world rendered onto an expanded canvas. The visible crop occupies the left portion; the hidden object / structure lies entirely outside the crop.
-
-V0 physical latent fields should include at minimum:
-
-- horizontal/vertical position outside the frame;
-- coarse size;
-- RGB albedo/intensity;
+- position / angular position;
+- size / angular width;
+- RGB albedo / radiance;
 - shape class (`disk`, `rectangle` initially);
-- occupancy mask;
-- one or two simple light parameters.
+- occupancy;
+- one or two simple lighting parameters.
 
-Optional coarse depth/layout fields may be added only if the first transport requires them.
+The hidden object must never enter the visible crop.
 
-The object itself must never enter the known crop.
+Synthetic generation saves separately:
 
-## Boundary measurement region
+- full ground-truth scene for evaluation only;
+- camera-visible crop;
+- hidden latent truth;
+- boundary region mask `R`;
+- noiseless physical boundary signal;
+- noisy boundary signal;
+- all nuisance and transport parameters.
 
-Physics is evaluated only where the camera actually has evidence.
+## Boundary measurement region R
 
-Define an informative visible region `R`, initially a narrow wall/floor strip next to the crop boundary. Store:
+The likelihood operates only on pixels or derived samples the camera actually observes.
 
-- clean visible background;
-- hidden truth;
-- noiseless leakage field on `R`;
-- noisy measurement `y`;
-- final visible crop;
-- mask identifying `R`.
+For v0, `R` is a narrow user- or program-defined wall/floor/corner strip adjacent to the crop boundary. The operator predicts a compact `[M,3]` boundary profile rather than the whole panorama.
 
-The likelihood is
+This supports the distinction:
 
-```text
-L(z) = || y_R - A_R(z) ||^2
-```
+> Structure stable across posterior samples may be measurement-supported. Fine details that vary across samples remain prior-filled imagination.
 
-not a loss over the entire hallucinated panorama.
+## Forward transport
 
-This preserves the distinction:
+Do not begin with a path tracer.
 
-> stable structure across posterior samples may be measurement-supported; varying fine detail is prior-filled uncertainty.
+Use an auditable differentiable corner/penumbra operator with:
 
-## Forward model A
+- soft angular visibility from an occluding edge;
+- smooth distance falloff;
+- coarse color transport;
+- optional soft penumbra;
+- ambient / gain nuisance terms.
 
-Do **not** start with a full path tracer.
-
-Use a fast differentiable proxy capturing first-order effects such as:
-
-- inverse-distance or smooth distance falloff;
-- orientation / edge sensitivity;
-- blurred first-bounce color contribution;
-- soft penumbra from an extended light source;
-- ambient term.
-
-A simple form is sufficient for the first gate:
+A useful v0 form is a smoothed visibility/transport matrix:
 
 ```text
-y_hat_i = b + sum_j L_j * rho_j * f(distance(i,j), geometry)
+y = K(geometry) @ L_hidden + ambient
 ```
 
-The proxy is intentionally approximate. Its adequacy is itself tested by Gate 1 and the wrong-physics control.
+where the occluder makes rows of `K` observe different hidden angular wedges. The no-occluder ablation replaces this structured visibility with an all-visible or otherwise deliberately information-poor operator.
 
-## Data generation
+The transport's condition number / singular spectrum should be inspectable, because inverse ill-conditioning is part of the scientific question rather than a hidden implementation detail.
 
-For each deterministic seed:
+## Physics-only inversion baseline
 
-1. sample `z_true` from the declared prior;
-2. render the full expanded scene;
-3. crop the visible field so hidden geometry is absent;
-4. compute `y_clean = A(z_true)` on region `R`;
-5. add declared Gaussian noise;
-6. save truth, visible crop, region mask, clean/noisy measurement, and all transport parameters.
+Add a classical inversion baseline with no learned semantic prior.
 
-Evaluation seeds must remain held out from any tuning of noise, proposal count, or success thresholds.
-
-## Gate 0 inference arms
-
-### Prior-only
-
-Draw `N` hypotheses from the same declared prior. Do not evaluate the measurement likelihood.
-
-### Correct physics
-
-For hypotheses `z_i`, compute
+Solve a constrained/regularized problem such as
 
 ```text
-E_i = || y - A(z_i) ||^2
-log w_i = -E_i / (2 sigma^2)
+min_L residual(y, K @ L) + lambda_tv * TV(L)
+subject to L >= 0
 ```
 
-normalize with log-sum-exp, and form weighted posterior summaries/resamples.
+This baseline asks how much angular/color structure the photons alone support before a generative prior is introduced.
 
-### Wrong physics
+It must be reported separately from posterior inference and later diffusion results.
 
-Use the same hypotheses and posterior machinery but deliberately mismatch the operator, for example:
+## Likelihoods and nuisance invariance
 
-- horizontal mirror;
-- wrong blur width;
-- incorrect light direction.
+### Exact synthetic likelihood
 
-If wrong physics performs as well as correct physics, the physical constraint is not specific.
+When the synthetic renderer and observation model share calibrated radiometry, allow direct Gaussian/L2 likelihood:
+
+```text
+log p(y | z) = -|| y - A(z) ||^2 / (2 sigma^2)
+```
+
+### Nuisance-invariant likelihood
+
+Real photographs contain unknown exposure, ambient illumination, white balance, wall albedo, tone mapping, and camera response. For photo mode, raw radiance error must not be assumed meaningful.
+
+Provide at least:
+
+1. `l2` — calibrated synthetic use only;
+2. `affine` — fit one shared gain plus per-channel offsets before residual measurement;
+3. optionally `affine_per_channel` — diagnostic color-blind ablation.
+
+The preferred real-photo residual is conceptually:
+
+```text
+min_{a,b_r,b_g,b_b} || y - (a * y_hat + b) ||^2
+```
+
+with `a` shared across channels to preserve relative chromatic structure.
+
+## Boundary-signal extraction
+
+Add an explicit extraction module between pixels and the inverse model.
+
+### Synthetic extraction check
+
+Bake the true leakage into a textured visible surface, then extract it back from the rendered crop. Report correlation / shape agreement between extracted and true signal.
+
+This isolates the extraction problem from the inverse problem.
+
+### Still-image extraction
+
+Initial still-image extractor may use:
+
+- linearized RGB where possible;
+- log-domain decomposition;
+- averaging across the selected strip;
+- low-pass smoothing along the boundary;
+- detrending / nuisance normalization;
+- chromatic and derivative profiles.
+
+It must be described as an estimator, not a ground-truth measurement.
+
+### Video extraction
+
+Reserve a temporal extractor in which static albedo largely cancels under frame differences / robust temporal baselines. Video may become the stronger real-world mode if still-image albedo/illumination separation proves underdetermined.
+
+## Gate 0 inference
+
+Use one shared candidate batch for every arm.
+
+For candidate `z_i`:
+
+```text
+E_i = residual(y, A(z_i))
+log w_i = -E_i / temperature_or_noise_scale
+```
+
+Normalize with log-sum-exp.
+
+Report:
+
+- posterior mean / median where meaningful;
+- MAP candidate only as a summary;
+- position/size/color error;
+- shape probability;
+- posterior entropy / credible width;
+- effective sample size;
+- contraction relative to prior;
+- correct vs wrong vs no-occluder performance.
 
 ## Gate 1 gradient controls
 
-For a declared set of initialization offsets:
+For continuous latent coordinates:
 
-- run one-step and short multi-step optimization of `L(z)`;
-- record cosine between gradient direction and truth direction for continuous attributes;
-- record absolute error before/after each step;
-- compare correct operator, wrong operator, and random direction controls;
-- normalize or separately report each latent component so a large-scale parameter cannot dominate merely by units.
+- compare autograd against finite differences;
+- normalize latent coordinates by declared prior ranges before truth-distance comparisons;
+- record componentwise direction agreement;
+- measure error before/after one step and a short optimization trajectory;
+- compare correct physics, wrong physics, no occluder, and norm-matched random controls.
 
-This is the first check that a future DPS gradient would be useful rather than merely differentiable.
+A loss decrease is not sufficient if latent truth error gets worse.
 
-## Outputs
+## GUI / local application
 
-For every evaluated scene save:
+Use **Gradio** as a thin local browser front end.
 
-- observed crop;
-- true expanded scene;
-- boundary measurement diagnostic;
-- prior hypotheses/samples;
-- correct-physics posterior samples;
-- wrong-physics posterior samples;
-- gradient trajectories for Gate 1;
-- posterior mean / MAP-style representative only as summaries;
-- machine-readable receipt with all seeds and parameters.
+Launch target:
 
-A later static report may visualize representative samples, but no visual cherry-pick can define success.
+```bash
+sighextraimage gui
+```
 
-## Metrics
+The GUI must call the same core functions used by CLI/scientific tests.
 
-Primary metrics:
+### GUI Mode A — Synthetic Lab
 
-- position error;
-- size error;
-- color/albedo error;
-- shape posterior probability / accuracy;
-- posterior entropy or credible-interval width;
-- measurement residual;
-- gradient-to-truth cosine / error reduction for Gate 1.
+Purpose: make the falsifiable mechanism visible and easy to explore.
 
-Secondary image-space metrics may be added later for the hidden region, but they do not replace latent-level evaluation.
+Controls:
 
-## Predeclared success gates
+- hidden position / angle;
+- size / width;
+- RGB/albedo;
+- shape;
+- noise level;
+- occluder on/off;
+- penumbra / transport softness;
+- likelihood mode;
+- candidate count / posterior temperature within safe bounded defaults.
 
-### Gate 0
+Displays:
 
-Across a fixed multi-seed evaluation set, correct-physics posterior should show:
+- full hidden truth (evaluation view only);
+- camera-visible crop;
+- selected boundary region `R`;
+- true and extracted boundary profiles;
+- transport kernel / singular-value or condition diagnostic;
+- physics-only TV inversion;
+- prior vs correct-physics vs wrong-physics vs no-occluder posterior summaries;
+- posterior contraction / uncertainty plots;
+- Gate 1 gradient direction / error-change diagnostics.
 
-1. lower median hidden-position error than prior-only;
-2. lower median color/intensity error than prior-only;
-3. reduced posterior uncertainty for at least one continuous attribute;
-4. better performance than wrong physics.
+The GUI must clearly mark ground-truth panels as synthetic-only information unavailable for real photos.
 
-Partial improvement is reported as partial, with the informative attributes named explicitly.
+### GUI Mode B — Photo Inspector
 
-### Gate 1
+Purpose: let users test whether a real photo contains a potentially informative boundary signal before any generative reconstruction is attempted.
 
-Across fixed perturbed initializations:
+Inputs:
 
-1. correct-physics gradient improves at least one declared recoverable latent attribute more often than chance/random-direction controls;
-2. correct physics outperforms wrong physics;
-3. multi-step optimization does not merely reduce measurement loss while systematically moving latent truth error upward.
+- upload JPG/PNG;
+- choose crop edge / corner orientation;
+- choose or draw measurement region `R`;
+- choose smoothing / extraction mode;
+- choose likelihood nuisance mode.
 
-Gate 1 may fail even if Gate 0 passes; that would mean the measurement contains information but the chosen differentiable proxy/parameterization provides poor local guidance.
+Outputs:
 
-## Claim boundary
+- original photo with `R` overlay;
+- extracted low-frequency illumination profile;
+- derivative/chromatic diagnostics;
+- estimated signal strength / SNR proxy;
+- transport conditioning for the selected geometric model;
+- optional physics-only inverse profile;
+- warnings when evidence is weak, geometry is incompatible, or the inference is underdetermined.
 
-A positive Gates 0–1 result means:
+V0 Photo Inspector must **not** present a generated hidden panorama as measured truth.
 
-> In this declared synthetic transport model, weak in-frame optical leakage contains recoverable information about an out-of-frame physical latent, and the specified likelihood both narrows a shared prior and supplies locally useful guidance for at least some hidden attributes.
+Recommended wording when the signal is not informative:
 
-It does **not** mean:
+> No evidence that this selected boundary strongly constrains the unseen region under the current model.
 
-- a unique real scene can be recovered from an arbitrary JPEG;
-- the proxy transport accurately models a real room;
-- a diffusion model has recovered ground truth;
-- generated detail unsupported by the likelihood is measured;
-- a wrong forward model can be trusted simply because its optimization converges.
+### Later GUI Mode C — Constrained Outpainting
 
-## Architecture
+Only after Gate 3 exists, add side-by-side galleries:
+
+- ordinary prior-only outpainting;
+- physics-guided outpainting;
+- multiple samples for each arm;
+- boundary re-rendering residual;
+- cross-sample stability / uncertainty.
+
+Never show only one “revealed” image.
+
+## Software architecture
 
 ```text
 src/sighextraimage/
-  latent.py         # physical latent z and parameter transforms
-  scene.py          # synthetic full-scene and crop rendering
-  transport.py      # differentiable/auditable A(z) on boundary region R
-  prior.py          # declared latent prior
-  inference.py      # prior, posterior weighting/resampling
-  guidance.py       # Gate 1 gradient tests / optimization
-  metrics.py        # attribute, uncertainty, gradient metrics
-  receipts.py       # deterministic run metadata
-  cli.py            # generate / infer / gradient / benchmark commands
+  latent.py          # physical latent z and parameter transforms
+  scene.py           # synthetic scene/crop rendering
+  transport.py       # corner/penumbra A(z), wrong/no-occluder controls
+  extraction.py      # synthetic/still/video boundary-signal extraction
+  inversion.py       # physics-only TV inversion
+  likelihood.py      # l2 / affine nuisance-invariant residuals
+  prior.py           # declared latent prior
+  inference.py       # Gate 0 posterior weighting/summaries
+  gradient_gate.py   # Gate 1 guidance falsifier
+  metrics.py         # errors, uncertainty, conditioning, extraction metrics
+  benchmark.py       # deterministic scientific runs
+  receipts.py        # JSON receipts
+  gui.py             # thin Gradio adapter over core functions
+  cli.py             # CLI including `gui`
 
 tests/
   test_latent.py
   test_scene.py
   test_transport.py
+  test_extraction.py
+  test_inversion.py
+  test_likelihood.py
   test_inference.py
-  test_guidance.py
-  test_metrics.py
+  test_gradient_gate.py
+  test_gui_smoke.py
+  test_benchmark.py
 
 results/
   receipts/
-
-site/
-  index.html         # only after measured results exist
 ```
 
 ## Numerical stack
 
-Use **PyTorch CPU** from the beginning for `z` and `A(z)` so Gate 1 uses the exact same differentiable operator that later guidance will need. Keep the problem small enough to run on CPU in seconds to minutes.
+- Python 3.11+
+- PyTorch CPU for differentiable physics and Gate 1
+- NumPy where convenient
+- Pillow for ordinary image I/O
+- Gradio for local GUI
+- matplotlib optional for saved diagnostics; GUI plots may use standard supported plotting components
+- pytest for verification
 
-Do not add a pretrained diffusion dependency until the exact posterior and gradient gates have been run and recorded.
+No pretrained diffusion dependency in the first Gates 0–1 implementation.
 
-## Interfaces reserved for generative work
+## Interfaces reserved for later diffusion work
 
-The physics side should expose:
+Core physics/extraction API should expose functions equivalent to:
 
 ```text
 sample_prior(n, rng) -> z candidates
-render_hidden(z) -> hidden image / attributes
+render_hidden(z) -> hidden representation
 predict_boundary(z, scene_context) -> y_hat
-physics_loss(z, y, scene_context) -> scalar
+extract_boundary_signal(image_or_frames, region, config) -> y
+physics_residual(y, y_hat, mode) -> scalar
+physics_loss(z, y, scene_context, mode) -> scalar
 ```
 
-A later generative adapter can provide:
+A later generative adapter may add:
 
 ```text
 denoise(x_t, t, known_crop) -> x0_hat
-latent_from_hidden(x0_hat) -> z_proxy
+predict_boundary_from_hidden_image(x0_hat_hidden, scene_context) -> y_hat
 ```
 
-or directly implement a differentiable boundary predictor from the generated hidden image, while reusing the same region mask, likelihood definition, metrics, and receipts.
+without changing benchmark definitions.
 
-## Verification strategy
+## Outputs and receipts
 
-Use test-driven development.
+Scientific runs save:
 
-Required checks:
+- seed/config metadata;
+- transport and extraction parameters;
+- condition numbers / diagnostic spectra where relevant;
+- Gate 0 per-arm metrics;
+- TV-inversion metrics;
+- no-occluder ablation;
+- Gate 1 componentwise diagnostics;
+- instability/non-finite counts;
+- exact command/config used.
 
-- hidden object never appears in known crop;
-- zero albedo/intensity produces zero object leakage;
-- transport deterministic before noise;
-- moving/changing hidden object changes `y` in expected direction;
-- posterior weights finite and normalized;
-- low-noise identifiable toy posterior concentrates near truth;
-- uninformative transport collapses guided inference to prior;
-- wrong physics is genuinely mismatched;
-- autograd gradient matches finite differences on selected latent coordinates;
-- an easy controlled Gate 1 case moves toward truth;
-- fixed seeds reproduce receipts within floating-point tolerance.
+GUI exploratory runs may optionally export a receipt, but must not silently enter the scientific benchmark dataset.
 
-## First milestone
+## Predeclared first-milestone criteria
+
+### Gate 0
+
+On fixed synthetic seeds, correct physics must outperform prior-only on at least one recoverable hidden attribute and outperform wrong physics on that same attribute. Posterior uncertainty must contract for at least one continuous attribute.
+
+The no-occluder ablation should lose angular/position information relative to the corner geometry. If it does not, the interpretation must be narrowed before claiming computational periscopy.
+
+### Gate 1
+
+Correct-physics gradients must show truth-directed/error-reducing behavior above wrong/no-occluder/random controls for at least one identifiable continuous attribute. Null or misleading components are reported explicitly.
+
+### Extraction
+
+The synthetic pixel-extraction path must be scored against the known baked-in signal before real-photo inference is interpreted. Poor extraction narrows the claim to idealized measurements even if Gates 0–1 succeed.
+
+### GUI
+
+The local GUI must launch without model downloads, run Synthetic Lab entirely on CPU, accept ordinary JPG/PNG files in Photo Inspector, and clearly distinguish measurement diagnostics from generated/inferred hidden content.
+
+## Claim boundary
+
+A positive early result means:
+
+> In the declared synthetic setup, weak visible boundary light contains recoverable information about some out-of-frame physical attributes; structured occlusion contributes information beyond a no-occluder control; and the specified likelihood can narrow a shared prior and/or provide useful local guidance.
+
+It does **not** mean:
+
+- arbitrary still photographs reveal unique hidden scenes;
+- the proxy is a complete real-room light transport model;
+- smooth image gradients are necessarily hidden-object evidence;
+- a generated continuation is ground truth;
+- diffusion success has been demonstrated before Gate 3;
+- the GUI is a “see around corners” device merely because it produces a visualization.
+
+## First implementation milestone
 
 The first useful repository state is complete when:
 
-1. PyTorch CPU package and CLI run from one command;
-2. tests pass;
-3. Gate 0 receipt compares prior-only, correct-physics, and wrong-physics arms;
-4. Gate 1 receipt records gradient direction/error changes under correct, wrong, and random controls;
-5. README states the measured outcome, including negative results;
-6. no diffusion dependency is added merely to make the demo look impressive.
+1. package + CLI + `sighextraimage gui` launch locally;
+2. Synthetic Lab exercises the same code as the benchmark;
+3. Gate 0 includes prior/correct/wrong/no-occluder arms;
+4. physics-only TV inversion is available;
+5. L2 and affine-invariant likelihoods are implemented/tested;
+6. Gate 1 tests correct/wrong/no-occluder/random gradients;
+7. synthetic boundary-signal extraction is scored against known truth;
+8. Photo Inspector accepts JPG/PNG and displays measurement diagnostics without making a hidden-scene claim;
+9. deterministic multi-seed JSON receipt records the first scientific outcome;
+10. README reports the result whether positive, partial, or negative.
 
-## Roadmap after v0
+## Roadmap
 
 ```text
-Gate 0: information in boundary signal
-       -> Gate 1: useful physics gradient
-       -> Gate 2: posterior narrowing / ambiguity map
-       -> Gate 3: diffusion-guided outpainting
-       -> Gate 4: real Varjoluotain-extracted measurement
+Gate 0: information in ideal boundary signal
+  -> Gate 1: useful physics gradient
+  -> synthetic pixel extraction
+  -> Gate 2: ambiguity / contraction map
+  -> real-photo / video measurement characterization
+  -> Gate 3: diffusion-guided outpainting
+  -> Gate 4: Varjoluotain-integrated real measurements
 ```
 
-The guiding distinction is:
+The guiding distinction remains:
 
 > Plain outpainting asks what could plausibly be outside the crop. SighExtraImage asks which plausible hidden worlds remain compatible with the photons that leaked into the visible boundary.
