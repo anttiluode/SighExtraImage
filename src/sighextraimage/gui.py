@@ -13,6 +13,7 @@ from .latent import PhysicalLatent, sample_prior
 from .scene import SceneConfig, render_visible_with_leakage
 from .transport import CornerTransport, NoOccluderTransport, WrongCornerTransport, TransportConfig
 from .photo import PhotoConfig, inspect_photo, WEAK_EVIDENCE_WARNING
+from .outpainting import DEFAULT_MODEL, OutpaintConfig, generate_outpaintings
 
 
 @dataclass
@@ -138,9 +139,35 @@ def gui_diagnostic_receipt(source_mode: str, diagnostics: dict) -> dict:
         "diagnostics": jsonable(allowed),
     }
 
+
+def _outpaint_callback(image, edge, x0, y0, x1, y1, smooth_sigma, prompt,
+                       extension_fraction, steps, seed, light_guidance, physics_strength,
+                       max_side, model_id, progress=gr.Progress()):
+    if image is None:
+        return None, None, "Upload a photograph first.", {}
+    try:
+        config = OutpaintConfig(edge=edge, extension_fraction=float(extension_fraction),
+            prompt=prompt, steps=int(steps), seed=int(seed), light_guidance=bool(light_guidance),
+            physics_strength=float(physics_strength), max_side=int(max_side), model_id=model_id)
+        photo = PhotoConfig(edge=edge, region_fraction=(float(x0),float(y0),float(x1),float(y1)),
+                            smooth_sigma=float(smooth_sigma))
+        result = generate_outpaintings(image, photo, config,
+            progress=lambda fraction, description: progress(fraction, desc=description))
+        report = (f"Generated an extension on the **{edge}** edge. Original photo pixels are preserved.\n\n"
+                  f"**Light guidance:** {result.guidance_status.replace('_',' ')}. "
+                  "New pixels are generated hypotheses about the unseen region.")
+        if result.warnings:
+            report += "\n\n" + "\n".join("- " + warning for warning in result.warnings)
+        return result.prior, result.guided, report, result.diagnostics
+    except Exception as exc:
+        return None, None, (f"Image generation could not complete: {exc}\n\n"
+            "Install generation dependencies with `pip install -e '.[outpaint]'`. "
+            "First use needs internet access to download the model. "
+            "For memory errors, reduce the working resolution."), {}
+
 def build_app() -> gr.Blocks:
     with gr.Blocks(title="SighExtraImage") as app:
-        gr.Markdown("# SighExtraImage\nPhysics-guided boundary evidence inspector")
+        gr.Markdown("# SighExtraImage\nExtend photographs and inspect the boundary light that may constrain them.")
         with gr.Tab("Synthetic Lab"):
             gr.Markdown("Ground truth below is **synthetic-only** evaluation information.")
             with gr.Row():
@@ -158,7 +185,7 @@ def build_app() -> gr.Blocks:
             summary = gr.JSON(label="Diagnostics")
             run.click(_synthetic_callback, [theta, width, r, g, b, candidates], [truth_img, visible_img, summary])
         with gr.Tab("Photo Inspector"):
-            gr.Markdown("Inspect real photo boundaries without claiming a hidden-scene reconstruction.")
+            gr.Markdown("Inspect boundary evidence, then generate an extension beyond the selected edge.")
             photo = gr.Image(type="numpy", label="Upload JPG/PNG")
             with gr.Row():
                 edge = gr.Dropdown(["right", "left", "top", "bottom"], value="right", label="Boundary edge")
@@ -174,8 +201,33 @@ def build_app() -> gr.Blocks:
             overlay = gr.Image(label="Canonicalized photo + selected region")
             photo_diag = gr.JSON(label="Boundary evidence diagnostics")
             inspect.click(_photo_callback, [photo, edge, x0, y0, x1, y1, smooth, likelihood], [overlay, photo_diag])
+            gr.Markdown("### Extend the photo\n"
+                "The first view uses the image model alone. The comparison can try experimental boundary-light guidance. "
+                "When guidance is weak, skipped, or off, it repeats the prior-only view.")
+            prompt = gr.Textbox(value=OutpaintConfig().prompt, label="Description of the extension", lines=2)
+            with gr.Row():
+                extend = gr.Slider(0.1,1.0,value=0.45,step=0.05,label="Amount to add (fraction of selected side)")
+                steps = gr.Slider(5,60,value=30,step=1,label="Sampling steps")
+                seed = gr.Number(value=42,precision=0,label="Random seed")
+            with gr.Row():
+                light_guidance = gr.Checkbox(value=True,label="Try boundary-light guidance (experimental)")
+                physics_strength = gr.Slider(0,0.25,value=0.08,step=0.01,label="Light guidance strength")
+                max_side = gr.Dropdown([256,384,512,640,768],value=512,label="Working resolution (maximum side)")
+            with gr.Accordion("Image model",open=False):
+                model_id = gr.Textbox(value=DEFAULT_MODEL,label="Hugging Face model ID or local model folder")
+                gr.Markdown("The model downloads on first generation and is cached for subsequent runs. CPU generation can be slow.")
+            generate = gr.Button("Generate image extension",variant="primary")
+            with gr.Row():
+                prior_image = gr.Image(label="Prior-only extension",format="png")
+                guided_image = gr.Image(label="Light-guided comparison",format="png")
+            generation_report = gr.Markdown()
+            generation_diagnostics = gr.JSON(label="Generation diagnostics")
+            generate.click(_outpaint_callback,
+                [photo,edge,x0,y0,x1,y1,smooth,prompt,extend,steps,seed,light_guidance,physics_strength,max_side,model_id],
+                [prior_image,guided_image,generation_report,generation_diagnostics],
+                api_name="generate_extension",concurrency_limit=1)
     return app
 
 
 def launch_gui(*, share: bool = False, server_name: str = "127.0.0.1", server_port: int | None = None):
-    return build_app().launch(share=share, server_name=server_name, server_port=server_port)
+    return build_app().queue().launch(share=share, server_name=server_name, server_port=server_port)
