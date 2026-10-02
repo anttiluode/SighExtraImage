@@ -39,7 +39,7 @@ sighextraimage benchmark \
 
 A positive synthetic result means only that the declared transport contains recoverable information and that the declared likelihood can exploit it. It does **not** mean an arbitrary photograph uniquely reveals the real scene outside its borders.
 
-The real-photo GUI is an **evidence inspector**, not a hidden-world revelation tool. Diffusion-guided outpainting is a later gate.
+The real-photo GUI provides **boundary evidence inspection and image outpainting**. The generated extension is a hypothesis about the unseen region. Experimental light guidance can constrain coarse brightness/color structure under the assumed corner geometry; it is not a calibrated hidden-scene reconstruction.
 
 ## Gates 0–1 v0 result
 
@@ -97,23 +97,50 @@ The v0 bench establishes three things inside its declared synthetic world:
 2. the no-occluder ablation removes that localization signal;
 3. the correct oracle likelihood supplies a truth-directed theta gradient.
 
-It does **not** yet establish calibrated posterior inference from extracted photo pixels. Real-photo mode should therefore expose boundary evidence and diagnostics, not claim to reveal the hidden scene.
+It does **not** yet establish calibrated posterior inference from extracted photo pixels. The outpainting feature below is a separate exploratory tool; it does not change this receipt or turn generated details into measured ground truth.
 
 ## Local GUI
 
-Install the project in a normal online Python environment with the GUI extra:
+Install the project in a normal online Python environment with image generation:
 
 ```bash
-pip install -e '.[gui]'
+pip install -e '.[outpaint]'
 sighextraimage gui
 ```
 
 The app opens locally in your browser and contains two modes:
 
 - **Synthetic Lab** — shows the controlled hidden truth, visible crop, posterior contraction, TV inversion, and Gate 1 controls. Ground-truth panels are explicitly synthetic-only.
-- **Photo Inspector** — upload a JPG/PNG, select the relevant edge and boundary region, then inspect the extracted illumination profile, derivative/chromatic diagnostics, transport conditioning, and optional physics-only inverse.
+- **Photo Inspector** — upload a JPG/PNG, select an edge and boundary region, inspect the extracted evidence, and click **Generate image extension** to produce a larger photograph outside the selected field of view.
 
-Photo Inspector deliberately does **not** output a single “revealed” hidden panorama. The first v0 receipt found that the extracted affine likelihood was overconfident even though the extracted profile shape tracked the oracle signal well. Until that likelihood is independently calibrated, the GUI reports evidence quality and model diagnostics only.
+The generation panels compare a **prior-only extension** with an **experimental light-guided extension**. The original photograph is preserved pixel for pixel, and the new region is added on the right, left, top, or bottom without stretching the original. Generated details are speculative.
+
+The first generation downloads `stable-diffusion-v1-5/stable-diffusion-inpainting` from Hugging Face (several GB). The download is cached on disk and the loaded model is reused between clicks. CUDA is used when available, otherwise MPS or CPU; CPU generation may take several minutes. Start with a working resolution of 256 or 384 and fewer sampling steps on a slower machine. Model use is subject to its [CreativeML OpenRAIL-M license](https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-inpainting).
+
+**Weak light evidence never blocks ordinary generation.** Flat/nonfinite measurements skip the light update and repeat the prior-only image in the comparison panel, with the reason reported. Experimental guidance uses the existing extractor and transport, keeps only coarse singular modes, requires positive exposure scaling, masks updates to generated pixels, and bounds their energy. These checks do not validate the real room geometry or calibrate a posterior. The same seed and deterministic VAE encoding are used in both runs.
+
+The optional `.[gui]` extra still installs the evidence inspector without downloading or installing the diffusion stack. Its generation button reports the extra needed when invoked.
+
+## Headless generation
+
+```bash
+sighextraimage outpaint photo.jpg --output extended.png \
+  --edge right --extend 0.45 --steps 30 --seed 42
+
+# Also try the coarse boundary-light constraint, with the default strip selection:
+sighextraimage outpaint photo.jpg --output prior.png --guided-output guided.png
+```
+
+Use the GUI to choose a meaningful measurement strip. `--max-side`, `--prompt`, and `--model` are available for headless runs. PNG outputs preserve original pixels exactly; the working resolution controls generation cost rather than output resolution.
+
+## Verification
+
+```bash
+pip install -e '.[outpaint,test]'
+python -m pytest -q
+```
+
+Generator integration tests construct small real Diffusers UNet/VAE/text/scheduler components locally, so tests do not download the large checkpoint. They verify both four- and nine-channel UNets, seeded generation, exact original-pixel preservation, finite bounded light updates, and generation despite weak evidence. These tests establish execution behavior, not full-model image quality.
 
 For weak or flat boundaries it reports:
 
