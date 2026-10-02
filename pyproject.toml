@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sighextraimage"
+version = "0.1.0"
+description = "Physics-guided out-of-frame inference from weak boundary light"
+requires-python = ">=3.11"
+dependencies = ["torch", "numpy", "pillow"]
+
+[project.optional-dependencies]
+gui = ["gradio>=5"]
+plot = ["matplotlib"]
+test = ["pytest"]
+
+[project.scripts]
+sighextraimage = "sighextraimage.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
