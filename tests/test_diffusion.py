@@ -4,7 +4,7 @@ import pytest
 import torch
 
 from sighextraimage import diffusion as diffusion
-from sighextraimage.outpainting import CoarseLightConstraint, OutpaintConfig, prepare_canvas
+from sighextraimage.outpainting import DEFAULT_MODEL, CoarseLightConstraint, OutpaintConfig, prepare_canvas
 from sighextraimage.extraction import srgb_to_linear
 from sighextraimage.transport import CornerTransport, TransportConfig
 
@@ -117,3 +117,31 @@ def test_sample_prediction_preserves_generation_and_explicitly_skips_guidance(ti
     assert torch.isfinite(result).all()
     assert engine.last_run['guidance_steps'] == 0
     assert 'sample' in engine.last_run['guidance_disabled_reason'].lower()
+
+
+def test_default_model_loads_fp16_variant_and_generates_on_cpu(tiny_pipeline,tmp_path,monkeypatch):
+    from diffusers import StableDiffusionInpaintPipeline
+    model = tmp_path/'fp16-only-model'
+    for component in (tiny_pipeline.unet,tiny_pipeline.vae,tiny_pipeline.text_encoder):
+        component.half()
+    tiny_pipeline.save_pretrained(model,safe_serialization=True,variant='fp16')
+    load_checkpoint = StableDiffusionInpaintPipeline.from_pretrained
+
+    # Replace only the remote model location; keep real checkpoint loading,
+    # dtype conversion, scheduler setup, and generation.
+    def local_default_checkpoint(cls,model_id,**kwargs):
+        assert model_id == DEFAULT_MODEL
+        return load_checkpoint(model,**kwargs)
+    monkeypatch.setattr(StableDiffusionInpaintPipeline,'from_pretrained',classmethod(local_default_checkpoint))
+    monkeypatch.setattr(torch.cuda,'is_available',lambda:False)
+    monkeypatch.setattr(torch.backends.mps,'is_available',lambda:False)
+
+    engine = diffusion.DiffusionEngine.from_model(DEFAULT_MODEL)
+    assert engine.device.type == 'cpu'
+    assert engine.unet_dtype == torch.float32
+    assert next(engine.pipe.text_encoder.parameters()).dtype == torch.float32
+    config = OutpaintConfig(steps=2,max_side=128)
+    prepared = prepare_canvas(np.full((40,80,3),128,dtype=np.uint8),config)
+    result = engine.generate(prepared,config)
+    assert torch.isfinite(result).all()
+    torch.testing.assert_close(result[:,:40,:80],prepared.canvas[:,:40,:80],rtol=0,atol=0)
