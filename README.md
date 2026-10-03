@@ -1,5 +1,7 @@
 # SighExtraImage
 
+![pic](pic.png)
+
 SighExtraImage asks a narrow computational-imaging question:
 
 > Can weak light observed near an image boundary reduce uncertainty about what lies outside the frame?
