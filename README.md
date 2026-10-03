@@ -1,5 +1,15 @@
 # SighExtraImage
 
+First. Some serious attempts at this: 
+
+https://openaccess.thecvf.com/content/CVPR2026/papers/Zheng_Similarity-Consistent_Likelihood_Diffusion_enables_Hidden_Person_Detection_from_Wall_Reflections_CVPR_2026_paper.pdf
+
+And: 
+
+https://pmc.ncbi.nlm.nih.gov/articles/PMC11479277/pdf/sensors-24-06480.pdf
+
+Then our silliness. 
+
 ![pic](pic.png)
 
 SighExtraImage asks a narrow computational-imaging question:
