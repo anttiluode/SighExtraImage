@@ -8,7 +8,11 @@ And:
 
 https://pmc.ncbi.nlm.nih.gov/articles/PMC11479277/pdf/sensors-24-06480.pdf
 
-Then our silliness. 
+And Claude Opus 5.5 version of this: 
+
+https://github.com/anttiluode/SighExtraImageClaude
+
+Then our silliness with Sol. 
 
 ![pic](pic.png)
 
