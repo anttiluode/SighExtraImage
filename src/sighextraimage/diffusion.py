@@ -7,7 +7,7 @@ from threading import RLock
 import torch
 import torch.nn.functional as F
 
-from .outpainting import CoarseLightConstraint, OutpaintCanvas, OutpaintConfig
+from .outpainting import DEFAULT_MODEL, CoarseLightConstraint, OutpaintCanvas, OutpaintConfig
 
 
 def classifier_free_prediction(unconditional: torch.Tensor, conditional: torch.Tensor,
@@ -56,8 +56,11 @@ class DiffusionEngine:
         device = torch.device("cuda" if torch.cuda.is_available() else
                               "mps" if torch.backends.mps.is_available() else "cpu")
         dtype = torch.float16 if device.type == "cuda" else torch.float32
+        # The default repository publishes safetensors only as the fp16 variant.
+        # Select its filenames independently of CPU/MPS computation precision.
+        variant = "fp16" if model_id == DEFAULT_MODEL else None
         pipe = StableDiffusionInpaintPipeline.from_pretrained(
-            model_id, torch_dtype=dtype, use_safetensors=True,
+            model_id, torch_dtype=dtype, variant=variant, use_safetensors=True,
             safety_checker=None, requires_safety_checker=False,
         )
         pipe.scheduler = DDIMScheduler.from_config(pipe.scheduler.config)
